@@ -1,27 +1,83 @@
+const express = require('express');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { User } = require('../models');
+const router = express.Router();
 
-const authenticateToken = async (req, res, next) => {
-  const token = req.headers['authorization']?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'Token não fornecido.' });
+// Registrar um novo usuário
+router.post('/register', async (req, res) => {
+  const { name, email, password, role } = req.body;
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findByPk(decoded.id);
-    if (!user) return res.status(401).json({ error: 'Usuário não encontrado.' });
+    // Verificar se o email já está registrado
+    const existingUser = await User.findOne({ where: { email } });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email já está em uso.' });
+    }
 
-    req.user = user; // Adiciona o usuário na requisição
-    next();
+    // Criptografar a senha
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Criar o usuário
+    const newUser = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      role: role || 'user', // Define 'user' como padrão se nenhum 'role' for fornecido
+    });
+
+    res.status(201).json({
+      message: 'Usuário registrado com sucesso.',
+      user: {
+        id: newUser.id,
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
+      },
+    });
   } catch (error) {
-    res.status(403).json({ error: 'Token inválido.' });
+    res.status(500).json({ error: 'Erro ao registrar usuário.' });
   }
-};
+});
 
-const isAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Acesso restrito a administradores.' });
+// Fazer login de um usuário
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // Verificar se o usuário existe
+    const user = await User.findOne({ where: { email } });
+    if (!user) {
+      return res.status(400).json({ error: 'Credenciais inválidas.' });
+    }
+
+    // Verificar se a senha está correta
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({ error: 'Credenciais inválidas.' });
+    }
+
+    // Gerar um token JWT
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' } // O token expira em 1 dia
+    );
+
+    res.json({
+      message: 'Login bem-sucedido.',
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao fazer login.' });
   }
-  next();
-};
+});
 
-module.exports = { authenticateToken, isAdmin };
+module.exports = router;
+
